@@ -1,49 +1,36 @@
-# AirControl 🖐️
+# 🖐️ Hand Gesture Controller
 
-Touchless laptop control using real-time hand tracking.
+A touchless laptop control system that uses real-time hand tracking to control PDF navigation with hand movements.
 
-## Features
+## 🚀 Features
 
-- Real-time hand tracking
-- Gesture-based PDF navigation
-- Previous/next page control
-- Webcam-based interaction
-- MediaPipe hand landmarks
-- PyAutoGUI computer control
+- Real-time hand tracking using webcam
+- Hand movement detection
+- Move hand up → Previous PDF page
+- Move hand down → Next PDF page
+- Works with Chrome PDF viewer
+- Touchless computer interaction
 
-## Tech Stack
+## 🛠️ Tech Stack
 
 - Python
 - OpenCV
 - MediaPipe
 - PyAutoGUI
 
-## How it works
+## ⚙️ How It Works
 
+```text
 Webcam
-↓
+   ↓
+OpenCV
+   ↓
 MediaPipe Hand Landmarker
-↓
-Hand movement detection
-↓
-Gesture recognition
-↓
+   ↓
+Hand Landmark Detection
+   ↓
+Movement Detection
+   ↓
 PyAutoGUI
-↓
-Laptop control
-
-## Current Status
-
-🚧 Prototype
-
-Currently supports:
-- Swipe/movement up → Previous PDF page
-- Swipe/movement down → Next PDF page
-
-## Future Improvements
-
-- Better swipe detection
-- Mouse control
-- Pinch-to-click
-- Play/pause gestures
-- Multi-gesture laptop control
+   ↓
+Chrome PDF
