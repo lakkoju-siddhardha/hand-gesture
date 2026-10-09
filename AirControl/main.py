@@ -2,14 +2,25 @@ import cv2
 import mediapipe as mp
 import pyautogui
 import time
+import math
 
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 
-# =============================
+# ==========================================
+# PyAutoGUI
+# ==========================================
+
+pyautogui.PAUSE = 0
+pyautogui.FAILSAFE = True
+
+SCREEN_W, SCREEN_H = pyautogui.size()
+
+
+# ==========================================
 # MediaPipe Hand Landmarker
-# =============================
+# ==========================================
 
 base_options = python.BaseOptions(
     model_asset_path="hand_landmarker.task"
@@ -27,162 +38,261 @@ options = vision.HandLandmarkerOptions(
 landmarker = vision.HandLandmarker.create_from_options(options)
 
 
-# =============================
-# Webcam
-# =============================
+# ==========================================
+# Camera
+# ==========================================
 
 cap = cv2.VideoCapture(0)
-
-timestamp = 0
-
-# Starting hand position
-anchor_y = None
-
-# Movement required to trigger page change
-MOVEMENT_THRESHOLD = 0.12
-
-# Prevent repeated page changes
-COOLDOWN = 0.8
-
-last_action_time = 0
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 
-# =============================
+# ==========================================
+# Mouse settings
+# ==========================================
+
+FRAME_REDUCTION = 80
+SMOOTHING = 5
+
+previous_x = 0
+previous_y = 0
+
+clicking = False
+
+PINCH_THRESHOLD = 0.045
+
+
+# ==========================================
+# Swipe settings
+# ==========================================
+
+SWIPE_DISTANCE = 0.14
+SWIPE_TIME = 0.45
+SWIPE_COOLDOWN = 0.8
+
+start_y = None
+start_time = None
+last_swipe_time = 0
+
+gesture_text = "READY"
+
+
+# ==========================================
 # Main Loop
-# =============================
+# ==========================================
 
-while cap.isOpened():
+while True:
 
     success, frame = cap.read()
 
     if not success:
-        print("Could not access camera")
+        print("Camera unavailable")
         break
 
-    # Mirror camera
     frame = cv2.flip(frame, 1)
 
-    # Convert BGR → RGB
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    # MediaPipe image
     mp_image = mp.Image(
         image_format=mp.ImageFormat.SRGB,
-        data=rgb_frame
+        data=rgb
     )
 
-    timestamp += 33
+    timestamp = int(time.monotonic() * 1000)
 
-    # Detect hand
     result = landmarker.detect_for_video(
         mp_image,
         timestamp
     )
 
+    h, w, _ = frame.shape
 
-    # =============================
-    # Hand Movement Detection
-    # =============================
+    gesture_text = "SHOW HAND"
+
+
+    # ==========================================
+    # Hand detected
+    # ==========================================
 
     if result.hand_landmarks:
 
         hand = result.hand_landmarks[0]
 
-        # Wrist Y coordinate
-        current_y = hand[0].y
-
-        # Set starting position
-        if anchor_y is None:
-            anchor_y = current_y
-
-        # Calculate movement
-        movement = current_y - anchor_y
-
-        current_time = time.time()
+        index_tip = hand[8]
+        thumb_tip = hand[4]
+        wrist = hand[0]
+        middle_mcp = hand[9]
 
 
-        # =============================
-        # MOVE UP → PREVIOUS PAGE
-        # =============================
+        # ======================================
+        # 1. INDEX FINGER → MOUSE MOVEMENT
+        # ======================================
 
-        if (
-            movement < -MOVEMENT_THRESHOLD
-            and current_time - last_action_time > COOLDOWN
-        ):
+        target_x = int(
+            (index_tip.x * w - FRAME_REDUCTION)
+            * SCREEN_W
+            / (w - 2 * FRAME_REDUCTION)
+        )
 
-            print("⬆️ PREVIOUS PAGE")
+        target_y = int(
+            (index_tip.y * h - FRAME_REDUCTION)
+            * SCREEN_H
+            / (h - 2 * FRAME_REDUCTION)
+        )
 
-            pyautogui.press("pageup")
+        target_x = max(0, min(SCREEN_W - 1, target_x))
+        target_y = max(0, min(SCREEN_H - 1, target_y))
 
-            last_action_time = current_time
+        smooth_x = previous_x + (
+            target_x - previous_x
+        ) / SMOOTHING
 
-            # Reset starting position
-            anchor_y = current_y
+        smooth_y = previous_y + (
+            target_y - previous_y
+        ) / SMOOTHING
 
+        pyautogui.moveTo(
+            int(smooth_x),
+            int(smooth_y)
+        )
 
-        # =============================
-        # MOVE DOWN → NEXT PAGE
-        # =============================
-
-        elif (
-            movement > MOVEMENT_THRESHOLD
-            and current_time - last_action_time > COOLDOWN
-        ):
-
-            print("⬇️ NEXT PAGE")
-
-            pyautogui.press("pagedown")
-
-            last_action_time = current_time
-
-            # Reset starting position
-            anchor_y = current_y
+        previous_x = smooth_x
+        previous_y = smooth_y
 
 
-        # =============================
-        # Draw Hand
-        # =============================
+        # ======================================
+        # 2. PINCH → LEFT CLICK
+        # ======================================
 
-        h, w, _ = frame.shape
+        distance = math.hypot(
+            thumb_tip.x - index_tip.x,
+            thumb_tip.y - index_tip.y
+        )
 
-        for landmark in hand:
+        if distance < PINCH_THRESHOLD:
 
-            x = int(landmark.x * w)
-            y = int(landmark.y * h)
+            gesture_text = "PINCH / CLICK"
+
+            # Click once when pinch begins
+            if not clicking:
+                pyautogui.click()
+                clicking = True
+
+        else:
+            clicking = False
+
+
+        # ======================================
+        # 3. SWIPE → PDF PAGE NAVIGATION
+        # ======================================
+
+        current_time = time.monotonic()
+
+        current_y = (
+            wrist.y + middle_mcp.y
+        ) / 2
+
+        # Don't interpret the same pinch motion
+        # as a swipe.
+        if not clicking:
+
+            if start_y is None:
+                start_y = current_y
+                start_time = current_time
+
+            movement = current_y - start_y
+            elapsed = current_time - start_time
+
+            if (
+                elapsed <= SWIPE_TIME
+                and current_time - last_swipe_time
+                > SWIPE_COOLDOWN
+            ):
+
+                if movement < -SWIPE_DISTANCE:
+
+                    print("SWIPE UP: PREVIOUS PAGE")
+
+                    pyautogui.press("pageup")
+
+                    gesture_text = "PREVIOUS PAGE"
+
+                    last_swipe_time = current_time
+                    start_y = None
+                    start_time = None
+
+                elif movement > SWIPE_DISTANCE:
+
+                    print("SWIPE DOWN: NEXT PAGE")
+
+                    pyautogui.press("pagedown")
+
+                    gesture_text = "NEXT PAGE"
+
+                    last_swipe_time = current_time
+                    start_y = None
+                    start_time = None
+
+            elif elapsed > SWIPE_TIME:
+                start_y = current_y
+                start_time = current_time
+
+        else:
+            start_y = None
+            start_time = None
+
+
+        # ======================================
+        # Draw index and thumb tips
+        # ======================================
+
+        for point in [index_tip, thumb_tip]:
+
+            px = int(point.x * w)
+            py = int(point.y * h)
 
             cv2.circle(
                 frame,
-                (x, y),
-                5,
+                (px, py),
+                8,
                 (0, 255, 0),
                 -1
             )
 
-
     else:
 
-        # Reset when hand disappears
-        anchor_y = None
+        clicking = False
+        start_y = None
+        start_time = None
+
+        previous_x = 0
+        previous_y = 0
 
 
-    # =============================
-    # Display Camera
-    # =============================
+    # ==========================================
+    # Display status
+    # ==========================================
 
-    cv2.imshow(
-        "AirControl - PDF Page Control",
-        frame
+    cv2.putText(
+        frame,
+        gesture_text,
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 0),
+        2
     )
 
+    cv2.imshow("AirControl - Virtual Mouse", frame)
 
-    # Press Q to quit
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
 
-# =============================
+# ==========================================
 # Cleanup
-# =============================
+# ==========================================
 
 cap.release()
 cv2.destroyAllWindows()
